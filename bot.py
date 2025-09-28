@@ -60,9 +60,13 @@ async def run_hop(interaction: discord.Interaction, user_id: int, timer_id: int,
         if duration > 300:
             await asyncio.sleep(duration - 300)
             remaining_spawns = sum(1 for t in active_timers.get(user_id, []) if t["id"] == timer_id and t["hop"] > hop_num)
-            await interaction.followup.send(
-                f"⚠️ **Timer #{timer_id}** - Bosses in 5 minutes, Region: *{region}*, SPAWNS LEFT: {remaining_spawns}\n🔗 {link_md}"
+
+            channel = interaction.channel
+            await channel.send(
+                f"{interaction.user.mention} ⚠️ **Timer #{timer_id}** - Bosses in 5 minutes, Region: *{region}*, SPAWNS LEFT: {remaining_spawns}\n🔗 {link_md}"
             )
+
+
             await asyncio.sleep(300)
         else:
             await asyncio.sleep(duration)
@@ -80,7 +84,9 @@ async def run_hop(interaction: discord.Interaction, user_id: int, timer_id: int,
             # hop_num is cancelled; send message only if it's the smallest hop among entries
             min_hop = min(t["hop"] for t in entries)
             if hop_num == min_hop:
-                await interaction.followup.send(f"❌ **Timer #{timer_id}** was cancelled.")
+                channel = interaction.channel
+                await channel.send(f"{interaction.user.mention} ❌ **Timer #{timer_id}** was cancelled.")
+
         # remove all entries of this timer
         active_timers[user_id] = [t for t in active_timers.get(user_id, []) if t["id"] != timer_id]
 
