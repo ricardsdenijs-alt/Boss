@@ -1,37 +1,52 @@
-import os
 import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
 from datetime import datetime, timedelta
 import re
-import logging
+import os
 from dotenv import load_dotenv
 
-# Load environment variables
+# -----------------------------
+# Load token safely
+# -----------------------------
 load_dotenv()
-DISCORD_TOKEN = os.getenv("MTQyMTU0NzgxNjQ0MTg3MjQyNw.GwBJvY.EjfYKEmHL8GppZ6oI0PSFqIuovVUG6QbCMhMKo")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = os.getenv("GUILD_ID")  # Optional: set your test server ID in .env for instant sync
 
-# Logging
-handler = logging.FileHandler(filename="discord.log", encoding="utf-8", mode="w")
+if not DISCORD_TOKEN:
+    raise ValueError("❌ No DISCORD_TOKEN set. Please add it to your .env file like:\nDISCORD_TOKEN=your_token_here")
 
+print(f"🔑 Loaded token starts with: {DISCORD_TOKEN[:10]}...")
+
+# -----------------------------
 # Bot setup
+# -----------------------------
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="/", intents=intents)
+guild = discord.Object(id=int(GUILD_ID)) if GUILD_ID else None
 
 # -----------------------------
 # Events
 # -----------------------------
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
-    print(f"✅ Bot is ready as {bot.user}. Slash commands synced.")
+    try:
+        if guild:
+            await bot.tree.sync(guild=guild)
+            print(f"✅ Synced commands to guild {GUILD_ID}")
+        else:
+            await bot.tree.sync()
+            print("✅ Synced global commands (may take up to 1 hour to appear)")
+        print(f"🤖 Bot is ready as {bot.user}")
+    except Exception as e:
+        print(f"⚠️ Failed to sync commands: {e}")
 
 # -----------------------------
-# Timer Commands
+# Timer system
 # -----------------------------
 active_timers = {}
 timer_id_counters = {}
@@ -46,7 +61,6 @@ def parse_time_string(time_str):
 
     hours = int(match.group(1)) if match.group(1) else 0
     minutes = int(match.group(2)) if match.group(2) else 0
-
     total_seconds = hours * 3600 + minutes * 60
     return total_seconds, f"{hours}h {minutes}m"
 
@@ -75,7 +89,9 @@ async def run_hop(interaction, user_id, timer_id, hop_num, duration, region, lin
         await interaction.followup.send(f"❌ **Timer #{timer_id}** was cancelled.")
         active_timers[user_id] = [t for t in active_timers[user_id] if t["id"] != timer_id]
 
-
+# -----------------------------
+# Commands
+# -----------------------------
 @bot.tree.command(name="timer", description="Start a repeating timer with hops.")
 @app_commands.describe(
     time="Initial time (e.g. 1h30m)",
@@ -85,7 +101,7 @@ async def run_hop(interaction, user_id, timer_id, hop_num, duration, region, lin
 )
 async def timer(interaction: discord.Interaction, time: str, hops: int = 1, region: str = "Unknown", link: str = ""):
     try:
-        total_seconds, duration_str = parse_time_string(time)
+        total_seconds, _ = parse_time_string(time)
         if total_seconds <= 0:
             await interaction.response.send_message("❌ Time must be greater than 0.", ephemeral=True)
             return
@@ -99,7 +115,7 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
         timer_id_counters[user_id] = timer_id_counters.get(user_id, 0) + 1
         timer_id = timer_id_counters[user_id]
 
-        await interaction.response.send_message(f"timer #{timer_id} has been activated\nregion: {region}")
+        await interaction.response.send_message(f"⏱ Timer #{timer_id} has been activated\n🌍 Region: {region}")
 
         if user_id not in active_timers:
             active_timers[user_id] = []
@@ -108,9 +124,7 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
             hop_num = hop + 1
             duration = total_seconds if hop == 0 else 2 * 3600
             end_time = datetime.utcnow() + timedelta(seconds=duration)
-
             task = asyncio.create_task(run_hop(interaction, user_id, timer_id, hop_num, duration, region, link_md))
-
             active_timers[user_id].append({
                 "id": timer_id,
                 "hop": hop_num,
@@ -183,9 +197,7 @@ async def remove(interaction: discord.Interaction, timer_number: int):
 
     await interaction.response.send_message(f"🛑 Timer #{timer_number} cancelled successfully.", ephemeral=True)
 
-# -----------------------------
-# Reminder Command
-# -----------------------------
+
 @bot.tree.command(name="reminder", description="Set a keyword-based reminder.")
 @app_commands.describe(message="One of: Super, Boss, Raids")
 async def reminder(interaction: discord.Interaction, message: str):
@@ -202,3 +214,13 @@ async def reminder(interaction: discord.Interaction, message: str):
         return
 
     await interaction.response.send_message(f"{interaction.user.mention} your reminder for **{message.capitalize()}** has been activated")
+    await asyncio.sleep(wait_time)
+    await interaction.followup.send(f"{interaction.user.mention}, it's your **{message.capitalize()}** reminder!")
+
+# -----------------------------
+# Run bot
+# -----------------------------
+try:
+    bot.run(DISCORD_TOKEN)
+except discord.errors.LoginFailure:
+    raise SystemExit("❌ Login failed: Improper token. Please reset your bot token in the Discord Developer Portal and update your .env file.")
