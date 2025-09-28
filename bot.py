@@ -218,6 +218,27 @@ async def reminder(interaction: discord.Interaction, message: str):
     await interaction.followup.send(f"{interaction.user.mention}, it's your **{message.capitalize()}** reminder!")
 
 # -----------------------------
+# Optional Flask web server for Render
+# -----------------------------
+from flask import Flask
+from threading import Thread
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "✅ Bot is running."
+
+def run_flask():
+    port = int(os.environ.get("PORT", 3000))  # Render dynamically sets the PORT
+    app.run(host='0.0.0.0', port=port)
+
+# Start Flask in background thread
+flask_thread = Thread(target=run_flask)
+flask_thread.start()
+
+
+# -----------------------------
 # Run bot
 # -----------------------------
 try:
