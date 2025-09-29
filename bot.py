@@ -181,6 +181,25 @@ async def reminder(interaction: discord.Interaction, message: str):
     await asyncio.sleep(wait_time)
     await interaction.channel.send(f"{interaction.user.mention}, it's your **{keyword.capitalize()}** reminder!")
 
+# -----------------------------
+# Optional Flask Web Server (for Render/Railway)
+# -----------------------------
+from flask import Flask
+from threading import Thread
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "✅ Bot is running."
+
+def run_flask():
+    port = int(os.environ.get("PORT", 3000))  # Render sets the PORT env var
+    app.run(host='0.0.0.0', port=port)
+
+# Start Flask in background thread
+Thread(target=run_flask).start()
+
 
 # -----------------------------
 # Run bot
@@ -189,5 +208,6 @@ try:
     bot.run(DISCORD_TOKEN)
 except discord.LoginFailure:
     raise SystemExit("❌ Login failed: Check your token.")
+
 
 
