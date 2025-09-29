@@ -50,54 +50,55 @@ async def run_timer(timer):
             duration = timer["initial_duration"] if hop_index == 0 else 7200
             link = timer["link"]
             region = timer["region"]
+            current_hop = hop_index + 1
 
-            print(f"⏰ Timer #{timer_id} started: {duration}s for hop {hop_index + 1}")
+            # Update timer info with current hop
+            timer["current_hop"] = current_hop
+            timer["remaining_hops"] = timer["hops"] - current_hop
+            timer["alert_time"] = datetime.now() + timedelta(seconds=max(0, duration - 300))
 
-            # 5-minute alert logic
+            print(f"⏰ Timer #{timer_id} started: {duration}s for hop {current_hop}")
+
+            # Only send 5-minute alert if duration is long enough
             if duration > 300:
                 # Wait until 5 minutes before end
                 wait_time_before_alert = duration - 300
                 print(f"⏰ Timer #{timer_id}: Waiting {wait_time_before_alert}s for 5-min alert")
                 await asyncio.sleep(wait_time_before_alert)
                 
-                # Send 5-minute warning
-                if timer in active_timers:  # Check if timer still exists
+                # Send 5-minute warning only if timer still exists
+                if timer in active_timers:
                     await channel.send(
                         f"{user.mention} ⚠️ **Timer #{timer_id}** - Bosses in 5 minutes!\n"
                         f"🌍 Region: *{region}*\n🔗 {link}"
                     )
                     print(f"✅ 5-min alert sent for Timer #{timer_id}")
                 
-                # Wait the remaining 5 minutes
+                # Wait the remaining 5 minutes (timer completion)
                 await asyncio.sleep(300)
             else:
-                # If duration is 5 minutes or less, just wait the full time
+                # If duration is 5 minutes or less, just wait the full time (no alert)
                 await asyncio.sleep(duration)
 
-            # Send completion message for this hop
-            if timer in active_timers:
-                await channel.send(
-                    f"{user.mention} 🎯 **Timer #{timer_id}** - Hop {hop_index + 1} completed!\n"
-                    f"🌍 Region: *{region}*\n🔗 {link}"
-                )
-                print(f"✅ Timer #{timer_id} hop {hop_index + 1} completed")
+            # Remove completed hop from active timers
+            if current_hop == timer["hops"]:
+                if timer in active_timers:
+                    active_timers.remove(timer)
+                    print(f"✅ Timer #{timer_id} completed all hops")
+            else:
+                # Update for next hop
+                timer["remaining_hops"] = timer["hops"] - current_hop
 
             # If there are more hops, continue after 2 hours
-            if hop_index < timer["hops"] - 1:
+            if current_hop < timer["hops"]:
                 print(f"⏰ Timer #{timer_id}: Waiting 2h for next hop")
                 await asyncio.sleep(7200)  # 2 hours between hops
 
     except Exception as e:
         print(f"❌ Error in timer #{timer_id}: {e}")
-        try:
-            await channel.send(f"❌ Timer #{timer_id} encountered an error: {e}")
-        except:
-            pass
-
-    # Cleanup
-    if timer in active_timers:
-        active_timers.remove(timer)
-        print(f"🗑️ Timer #{timer_id} removed from active timers")
+        # Remove timer on error
+        if timer in active_timers:
+            active_timers.remove(timer)
 
 
 @bot.event
@@ -146,27 +147,17 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
             "region": region,
             "link": link,
             "hops": hops,
+            "remaining_hops": hops,
+            "start_time": datetime.now(),
+            "alert_time": datetime.now() + timedelta(seconds=max(0, seconds - 300)),
         }
 
         active_timers.append(timer_data)
         asyncio.create_task(run_timer(timer_data))
 
-        # Format time display
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        
-        time_display = ""
-        if hours > 0:
-            time_display += f"{hours}h"
-        if minutes > 0:
-            time_display += f"{minutes}m"
-        
         await interaction.response.send_message(
-            f"⏱ **Timer #{timer_id_counter}** started by {interaction.user.mention}\n"
-            f"• Initial time: **{time_display}**\n"
-            f"• Region: **{region}**\n"
-            f"• Hops: **{hops}**\n"
-            f"• Link: {link if link else 'Not provided'}"
+            f"⏱ **Timer #{timer_id_counter}** has been activated\n"
+            f"🌍 Region: {region}"
         )
 
         timer_id_counter += 1
@@ -185,22 +176,26 @@ async def timers(interaction: discord.Interaction):
 
     msg = "**🕒 Active Timers:**\n\n"
     for t in active_timers:
-        # Calculate time display
-        seconds = t["initial_duration"]
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
+        # Calculate time until 5-minute alert
+        time_until_alert = t["alert_time"] - datetime.now()
+        total_seconds = max(0, int(time_until_alert.total_seconds()))
+        
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        
         time_display = ""
         if hours > 0:
             time_display += f"{hours}h"
         if minutes > 0:
             time_display += f"{minutes}m"
+        if total_seconds == 0:
+            time_display = "Alert pending"
             
         msg += (
-            f"**Timer #{t['id']}** — Region: `{t['region']}`\n"
-            f"• Initial duration: **{time_display}**\n"
-            f"• Hops remaining: **{t['hops']}**\n"
-            f"• User: {t['user'].mention}\n"
-            f"• Invite: {t['link'] if t['link'] else 'Not provided'}\n\n"
+            f"**Timer #{t['id']}**\n"
+            f"• Time until alert: **{time_display}**\n"
+            f"• Region: **{t['region']}**\n"
+            f"• Hops remaining: **{t['remaining_hops']}**\n\n"
         )
 
     await interaction.response.send_message(msg, ephemeral=True)
