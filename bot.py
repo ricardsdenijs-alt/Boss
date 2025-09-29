@@ -210,15 +210,17 @@ async def reminder_command(interaction: Interaction, message: str):
         ephemeral=True
     )
 
-    async def send_reminder():
-        await asyncio.sleep(wait_time)
-        try:
-            await interaction.followup.send(f"🔔 Reminder: Time for **{keyword}**!", ephemeral=True)
-        except Exception as e:
-            print(f"❌ Could not send reminder followup: {e}")
 
-    asyncio.create_task(send_reminder())
+from aiohttp import web
 
+async def handle():
+    return web.Response(text="✅ Bot is running!")
+
+app = web.Application()
+app.router.add_get("/", handle)
+
+if __name__ == "__main__":
+    web.run_app(app, host="0.0.0.0", port=8080)
 
 # Run bot
 bot.run(DISCORD_TOKEN)
