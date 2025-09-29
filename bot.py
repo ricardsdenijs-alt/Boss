@@ -211,16 +211,43 @@ async def reminder_command(interaction: Interaction, message: str):
     )
 
 
+import os
+import asyncio
 from aiohttp import web
+import discord
+from discord.ext import commands
 
-async def handle():
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+PORT = int(os.getenv("PORT", 8080))  # Render sets PORT automatically
+
+bot = commands.Bot(command_prefix="/", intents=discord.Intents.default())
+
+# --- Tiny webserver for Render ---
+async def handle(request):
     return web.Response(text="✅ Bot is running!")
 
-app = web.Application()
-app.router.add_get("/", handle)
+async def start_webserver():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    print(f"🌍 Webserver running on port {PORT}")
+
+# --- Bot ready event ---
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user}")
+
+# --- Run both bot + webserver ---
+async def main():
+    await start_webserver()
+    await bot.start(DISCORD_TOKEN)
 
 if __name__ == "__main__":
-    web.run_app(app, host="0.0.0.0", port=8080)
+    asyncio.run(main())
+
 
 # Run bot
 bot.run(DISCORD_TOKEN)
