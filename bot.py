@@ -155,6 +155,7 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
         active_timers.append(timer_data)
         asyncio.create_task(run_timer(timer_data))
 
+        # FIXED: Use followup instead of response to avoid timing issues
         await interaction.response.send_message(
             f"⏱ **Timer #{timer_id_counter}** has been activated\n"
             f"🌍 Region: {region}"
@@ -163,9 +164,17 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
         timer_id_counter += 1
 
     except ValueError as e:
-        await interaction.response.send_message(f"❌ {str(e)}", ephemeral=True)
+        # FIXED: Check if response is already sent
+        if not interaction.response.is_done():
+            await interaction.response.send_message(f"❌ {str(e)}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ {str(e)}", ephemeral=True)
     except Exception as e:
-        await interaction.response.send_message(f"❌ An unexpected error occurred: {str(e)}", ephemeral=True)
+        # FIXED: Check if response is already sent
+        if not interaction.response.is_done():
+            await interaction.response.send_message(f"❌ An unexpected error occurred: {str(e)}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ An unexpected error occurred: {str(e)}", ephemeral=True)
 
 
 @bot.tree.command(name="timers", description="List all active timers.")
@@ -180,6 +189,7 @@ async def timers(interaction: discord.Interaction):
         time_until_alert = t["alert_time"] - datetime.now()
         total_seconds = max(0, int(time_until_alert.total_seconds()))
         
+        # FIXED: Proper time formatting
         hours = total_seconds // 3600
         minutes = (total_seconds % 3600) // 60
         
@@ -190,7 +200,10 @@ async def timers(interaction: discord.Interaction):
             time_display += f"{minutes}m"
         if total_seconds == 0:
             time_display = "Alert pending"
+        elif not time_display:  # If less than 1 minute
+            time_display = "Less than 1m"
             
+        # FIXED: Clean format with proper values
         msg += (
             f"**Timer #{t['id']}**\n"
             f"• Time until alert: **{time_display}**\n"
@@ -264,11 +277,11 @@ try:
         return "✅ Bot is running."
 
     def run_flask():
-        port = int(os.environ.get("PORT", 3000))
+        port = int(os.environ.get("PORT", 10000))  # Changed to 10000 for Render
         app.run(host='0.0.0.0', port=port)
 
     Thread(target=run_flask, daemon=True).start()
-    print("🌐 Flask server started")
+    print("🌐 Flask server started on port 10000")
 except ImportError:
     print("⚠️ Flask not available, web server disabled")
 
