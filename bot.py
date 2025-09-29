@@ -52,12 +52,7 @@ async def run_timer(timer):
             region = timer["region"]
             current_hop = hop_index + 1
 
-            # Update timer info with current hop
-            timer["current_hop"] = current_hop
-            timer["remaining_hops"] = timer["hops"] - current_hop
-            timer["alert_time"] = datetime.now() + timedelta(seconds=max(0, duration - 300))
-
-            print(f"⏰ Timer #{timer_id} started: {duration}s for hop {current_hop}")
+            print(f"⏰ Timer #{timer_id} hop {current_hop}: Total duration {duration}s")
 
             # Only send 5-minute alert if duration is long enough
             if duration > 300:
@@ -70,14 +65,15 @@ async def run_timer(timer):
                 
                 # Send 5-minute warning only if timer still exists
                 if timer in active_timers:
+                    print(f"✅ SENDING 5-min alert for Timer #{timer_id}")
                     await channel.send(
                         f"{user.mention} ⚠️ **Timer #{timer_id}** - Bosses in 5 minutes!\n"
                         f"🌍 Region: *{region}*\n🔗 {link}"
                     )
-                    print(f"✅ 5-min alert sent for Timer #{timer_id}")
+                else:
+                    print(f"❌ Timer #{timer_id} not found in active timers, skipping alert")
                 
-                # FIXED: Don't wait the remaining 5 minutes, just remove the timer
-                # The timer is done after sending the 5-minute alert
+                # Timer is done after sending the 5-minute alert
                 print(f"✅ Timer #{timer_id} hop {current_hop} completed (alert sent)")
                 
             else:
@@ -86,7 +82,7 @@ async def run_timer(timer):
                 await asyncio.sleep(duration)
                 print(f"✅ Timer #{timer_id} hop {current_hop} completed (no alert)")
 
-            # Update remaining hops
+            # Update remaining hops for display in /timers
             timer["remaining_hops"] = timer["hops"] - current_hop
 
             # If there are more hops, continue after 2 hours
@@ -108,13 +104,15 @@ async def run_timer(timer):
 
 @bot.event
 async def on_ready():
+    print(f"✅ Bot is starting up as {bot.user}")
     try:
         if guild:
-            await bot.tree.sync(guild=guild)
-            print(f"✅ Bot is ready as {bot.user} in guild {GUILD_ID}")
+            synced = await bot.tree.sync(guild=guild)
+            print(f"✅ Synced {len(synced)} commands to guild {GUILD_ID}")
         else:
-            await bot.tree.sync()
-            print(f"✅ Bot is ready as {bot.user} (global)")
+            synced = await bot.tree.sync()
+            print(f"✅ Synced {len(synced)} commands globally")
+        print(f"✅ Bot is ready as {bot.user}")
     except Exception as e:
         print(f"❌ Error syncing commands: {e}")
 
@@ -160,6 +158,8 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
         active_timers.append(timer_data)
         asyncio.create_task(run_timer(timer_data))
 
+        print(f"🎯 Timer #{timer_id_counter} created: {seconds}s, {hops} hops, region: {region}")
+
         await interaction.response.send_message(
             f"⏱ **Timer #{timer_id_counter}** has been activated\n"
             f"🌍 Region: {region}"
@@ -173,6 +173,7 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
         else:
             await interaction.followup.send(f"❌ {str(e)}", ephemeral=True)
     except Exception as e:
+        print(f"❌ Error in timer command: {e}")
         if not interaction.response.is_done():
             await interaction.response.send_message(f"❌ An unexpected error occurred: {str(e)}", ephemeral=True)
         else:
@@ -265,28 +266,9 @@ async def send_reminder(interaction, wait_time, display_name):
         print(f"❌ Error in reminder: {e}")
 
 
-# Optional web server for uptime (Render, Replit)
-try:
-    from flask import Flask
-    from threading import Thread
-
-    app = Flask(__name__)
-
-    @app.route('/')
-    def home():
-        return "✅ Bot is running."
-
-    def run_flask():
-        port = int(os.environ.get("PORT", 10000))
-        app.run(host='0.0.0.0', port=port)
-
-    Thread(target=run_flask, daemon=True).start()
-    print("🌐 Flask server started on port 10000")
-except ImportError:
-    print("⚠️ Flask not available, web server disabled")
-
 # Run bot
 if __name__ == "__main__":
+    print("🚀 Starting bot...")
     try:
         bot.run(DISCORD_TOKEN)
     except Exception as e:
