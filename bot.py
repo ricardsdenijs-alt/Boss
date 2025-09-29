@@ -62,9 +62,11 @@ async def run_timer(timer):
             # Only send 5-minute alert if duration is long enough
             if duration > 300:
                 # Wait until 5 minutes before end
-                wait_time_before_alert = duration - 300
-                print(f"⏰ Timer #{timer_id}: Waiting {wait_time_before_alert}s for 5-min alert")
-                await asyncio.sleep(wait_time_before_alert)
+                wait_time_for_alert = duration - 300
+                print(f"⏰ Timer #{timer_id}: Waiting {wait_time_for_alert}s for 5-min alert")
+                
+                # Wait until it's time for the 5-minute alert
+                await asyncio.sleep(wait_time_for_alert)
                 
                 # Send 5-minute warning only if timer still exists
                 if timer in active_timers:
@@ -74,25 +76,28 @@ async def run_timer(timer):
                     )
                     print(f"✅ 5-min alert sent for Timer #{timer_id}")
                 
-                # Wait the remaining 5 minutes (timer completion)
-                await asyncio.sleep(300)
+                # FIXED: Don't wait the remaining 5 minutes, just remove the timer
+                # The timer is done after sending the 5-minute alert
+                print(f"✅ Timer #{timer_id} hop {current_hop} completed (alert sent)")
+                
             else:
-                # If duration is 5 minutes or less, just wait the full time (no alert)
+                # If duration is 5 minutes or less, just wait and complete without alert
+                print(f"⏰ Timer #{timer_id}: Duration too short for alert, waiting {duration}s")
                 await asyncio.sleep(duration)
+                print(f"✅ Timer #{timer_id} hop {current_hop} completed (no alert)")
 
-            # Remove completed hop from active timers
-            if current_hop == timer["hops"]:
-                if timer in active_timers:
-                    active_timers.remove(timer)
-                    print(f"✅ Timer #{timer_id} completed all hops")
-            else:
-                # Update for next hop
-                timer["remaining_hops"] = timer["hops"] - current_hop
+            # Update remaining hops
+            timer["remaining_hops"] = timer["hops"] - current_hop
 
             # If there are more hops, continue after 2 hours
             if current_hop < timer["hops"]:
                 print(f"⏰ Timer #{timer_id}: Waiting 2h for next hop")
                 await asyncio.sleep(7200)  # 2 hours between hops
+
+        # Remove timer after all hops are done
+        if timer in active_timers:
+            active_timers.remove(timer)
+            print(f"🗑️ Timer #{timer_id} removed (all hops completed)")
 
     except Exception as e:
         print(f"❌ Error in timer #{timer_id}: {e}")
@@ -155,7 +160,6 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
         active_timers.append(timer_data)
         asyncio.create_task(run_timer(timer_data))
 
-        # FIXED: Use followup instead of response to avoid timing issues
         await interaction.response.send_message(
             f"⏱ **Timer #{timer_id_counter}** has been activated\n"
             f"🌍 Region: {region}"
@@ -164,13 +168,11 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
         timer_id_counter += 1
 
     except ValueError as e:
-        # FIXED: Check if response is already sent
         if not interaction.response.is_done():
             await interaction.response.send_message(f"❌ {str(e)}", ephemeral=True)
         else:
             await interaction.followup.send(f"❌ {str(e)}", ephemeral=True)
     except Exception as e:
-        # FIXED: Check if response is already sent
         if not interaction.response.is_done():
             await interaction.response.send_message(f"❌ An unexpected error occurred: {str(e)}", ephemeral=True)
         else:
@@ -189,7 +191,6 @@ async def timers(interaction: discord.Interaction):
         time_until_alert = t["alert_time"] - datetime.now()
         total_seconds = max(0, int(time_until_alert.total_seconds()))
         
-        # FIXED: Proper time formatting
         hours = total_seconds // 3600
         minutes = (total_seconds % 3600) // 60
         
@@ -203,7 +204,6 @@ async def timers(interaction: discord.Interaction):
         elif not time_display:  # If less than 1 minute
             time_display = "Less than 1m"
             
-        # FIXED: Clean format with proper values
         msg += (
             f"**Timer #{t['id']}**\n"
             f"• Time until alert: **{time_display}**\n"
@@ -277,7 +277,7 @@ try:
         return "✅ Bot is running."
 
     def run_flask():
-        port = int(os.environ.get("PORT", 10000))  # Changed to 10000 for Render
+        port = int(os.environ.get("PORT", 10000))
         app.run(host='0.0.0.0', port=port)
 
     Thread(target=run_flask, daemon=True).start()
