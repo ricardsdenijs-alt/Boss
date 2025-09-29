@@ -265,6 +265,25 @@ async def send_reminder(interaction, wait_time, display_name):
     except Exception as e:
         print(f"❌ Error in reminder: {e}")
 
+# Optional web server for uptime (Render, Replit)
+try:
+    from flask import Flask
+    from threading import Thread
+
+    app = Flask(__name__)
+
+    @app.route('/')
+    def home():
+        return "✅ Bot is running."
+
+    def run_flask():
+        port = int(os.environ.get("PORT", 3000))
+        app.run(host='0.0.0.0', port=port)
+
+    Thread(target=run_flask, daemon=True).start()
+    print("🌐 Flask server started")
+except ImportError:
+    print("⚠️ Flask not available, web server disabled")
 
 # Run bot
 if __name__ == "__main__":
@@ -273,3 +292,4 @@ if __name__ == "__main__":
         bot.run(DISCORD_TOKEN)
     except Exception as e:
         print(f"❌ Bot crashed: {e}")
+
