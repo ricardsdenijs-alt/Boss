@@ -306,7 +306,10 @@ async def reminder_command(interaction: Interaction, message: str):
         await response.send_message("❌ Use exactly one of: boss, super, raids", ephemeral=True)
         return
 
-    wait_time_seconds = 3600 if keyword in {"boss", "raids"} else 7200
+        if keyword in {"boss", "super"}:
+        wait_time_seconds = 3600  # 60 minutes
+    elif keyword == "raids":
+        wait_time_seconds = 7200  # 120 minutes
 
     # Send immediate confirmation
     await response.send_message(f"⏰ Reminder set for **{keyword}** in {wait_time_seconds // 60} minutes!", ephemeral=True)
@@ -366,3 +369,4 @@ if __name__ == "__main__":
         asyncio.run(_main())
     except KeyboardInterrupt:
         logger.info("Interrupted by user, exiting.")
+
