@@ -32,38 +32,85 @@ def parse_time_string(time_str):
         raise ValueError("Invalid time format. Use '1h30m', '45m', etc.")
     hours = int(match.group(1)) if match.group(1) else 0
     minutes = int(match.group(2)) if match.group(2) else 0
-    return hours * 3600 + minutes * 60
+    
+    total_seconds = hours * 3600 + minutes * 60
+    if total_seconds <= 0:
+        raise ValueError("Time must be greater than 0.")
+    
+    return total_seconds
 
 
 async def run_timer(timer):
     user = timer["user"]
     channel = timer["channel"]
+    timer_id = timer["id"]
 
-    for hop_index in range(timer["hops"]):
-        duration = timer["initial_duration"] if hop_index == 0 else 7200
-        link = timer["link"]
-        region = timer["region"]
-        timer_id = timer["id"]
+    try:
+        for hop_index in range(timer["hops"]):
+            duration = timer["initial_duration"] if hop_index == 0 else 7200
+            link = timer["link"]
+            region = timer["region"]
 
-        # 5-minute alert
-        if duration > 300:
-            await asyncio.sleep(duration - 300)
-            await channel.send(
-                f"{user.mention} ⚠️ **Timer #{timer_id}** - Bosses in 5 minutes!\n🌍 Region: *{region}*\n🔗 {link}"
-            )
-            await asyncio.sleep(300)
-        else:
-            await asyncio.sleep(duration)
+            print(f"⏰ Timer #{timer_id} started: {duration}s for hop {hop_index + 1}")
+
+            # 5-minute alert logic
+            if duration > 300:
+                # Wait until 5 minutes before end
+                wait_time_before_alert = duration - 300
+                print(f"⏰ Timer #{timer_id}: Waiting {wait_time_before_alert}s for 5-min alert")
+                await asyncio.sleep(wait_time_before_alert)
+                
+                # Send 5-minute warning
+                if timer in active_timers:  # Check if timer still exists
+                    await channel.send(
+                        f"{user.mention} ⚠️ **Timer #{timer_id}** - Bosses in 5 minutes!\n"
+                        f"🌍 Region: *{region}*\n🔗 {link}"
+                    )
+                    print(f"✅ 5-min alert sent for Timer #{timer_id}")
+                
+                # Wait the remaining 5 minutes
+                await asyncio.sleep(300)
+            else:
+                # If duration is 5 minutes or less, just wait the full time
+                await asyncio.sleep(duration)
+
+            # Send completion message for this hop
+            if timer in active_timers:
+                await channel.send(
+                    f"{user.mention} 🎯 **Timer #{timer_id}** - Hop {hop_index + 1} completed!\n"
+                    f"🌍 Region: *{region}*\n🔗 {link}"
+                )
+                print(f"✅ Timer #{timer_id} hop {hop_index + 1} completed")
+
+            # If there are more hops, continue after 2 hours
+            if hop_index < timer["hops"] - 1:
+                print(f"⏰ Timer #{timer_id}: Waiting 2h for next hop")
+                await asyncio.sleep(7200)  # 2 hours between hops
+
+    except Exception as e:
+        print(f"❌ Error in timer #{timer_id}: {e}")
+        try:
+            await channel.send(f"❌ Timer #{timer_id} encountered an error: {e}")
+        except:
+            pass
 
     # Cleanup
     if timer in active_timers:
         active_timers.remove(timer)
+        print(f"🗑️ Timer #{timer_id} removed from active timers")
 
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync(guild=guild) if guild else await bot.tree.sync()
-    print(f"✅ Bot is ready as {bot.user}")
+    try:
+        if guild:
+            await bot.tree.sync(guild=guild)
+            print(f"✅ Bot is ready as {bot.user} in guild {GUILD_ID}")
+        else:
+            await bot.tree.sync()
+            print(f"✅ Bot is ready as {bot.user} (global)")
+    except Exception as e:
+        print(f"❌ Error syncing commands: {e}")
 
 
 @bot.tree.command(name="timer", description="Start a repeating timer with hops.")
@@ -78,15 +125,18 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
 
     try:
         seconds = parse_time_string(time)
-        if seconds <= 0:
-            await interaction.response.send_message("❌ Time must be greater than 0.", ephemeral=True)
+        
+        # Validate hops
+        if hops < 1:
+            await interaction.response.send_message("❌ Hops must be at least 1.", ephemeral=True)
             return
 
-        # Check duplicate link
-        for t in active_timers:
-            if t["link"] == link:
-                await interaction.response.send_message("❌ This link already has a timer.", ephemeral=True)
-                return
+        # Check duplicate link if link is provided
+        if link:
+            for t in active_timers:
+                if t["link"] == link:
+                    await interaction.response.send_message("❌ This link already has a timer.", ephemeral=True)
+                    return
 
         timer_data = {
             "id": timer_id_counter,
@@ -101,14 +151,30 @@ async def timer(interaction: discord.Interaction, time: str, hops: int = 1, regi
         active_timers.append(timer_data)
         asyncio.create_task(run_timer(timer_data))
 
+        # Format time display
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        
+        time_display = ""
+        if hours > 0:
+            time_display += f"{hours}h"
+        if minutes > 0:
+            time_display += f"{minutes}m"
+        
         await interaction.response.send_message(
-            f"⏱ Timer #{timer_id_counter} started by {interaction.user.mention} in region **{region}** with {hops} hop(s)."
+            f"⏱ **Timer #{timer_id_counter}** started by {interaction.user.mention}\n"
+            f"• Initial time: **{time_display}**\n"
+            f"• Region: **{region}**\n"
+            f"• Hops: **{hops}**\n"
+            f"• Link: {link if link else 'Not provided'}"
         )
 
         timer_id_counter += 1
 
     except ValueError as e:
         await interaction.response.send_message(f"❌ {str(e)}", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ An unexpected error occurred: {str(e)}", ephemeral=True)
 
 
 @bot.tree.command(name="timers", description="List all active timers.")
@@ -119,10 +185,22 @@ async def timers(interaction: discord.Interaction):
 
     msg = "**🕒 Active Timers:**\n\n"
     for t in active_timers:
+        # Calculate time display
+        seconds = t["initial_duration"]
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        time_display = ""
+        if hours > 0:
+            time_display += f"{hours}h"
+        if minutes > 0:
+            time_display += f"{minutes}m"
+            
         msg += (
             f"**Timer #{t['id']}** — Region: `{t['region']}`\n"
+            f"• Initial duration: **{time_display}**\n"
             f"• Hops remaining: **{t['hops']}**\n"
-            f"• Invite: {t['link']}\n\n"
+            f"• User: {t['user'].mention}\n"
+            f"• Invite: {t['link'] if t['link'] else 'Not provided'}\n\n"
         )
 
     await interaction.response.send_message(msg, ephemeral=True)
@@ -147,31 +225,61 @@ async def reminder(interaction: discord.Interaction, message: str):
         await interaction.response.send_message("❌ Use 'boss', 'super', or 'raids'.", ephemeral=True)
         return
 
-    wait_time = 3600 if keyword in ["boss", "super"] else 7200
+    # Determine wait time based on keyword
+    if keyword == "boss":
+        wait_time = 3600  # 1 hour
+        display_name = "Boss"
+    elif keyword == "super":
+        wait_time = 3600  # 1 hour
+        display_name = "Super"
+    else:  # raids
+        wait_time = 7200  # 2 hours
+        display_name = "Raids"
+
     await interaction.response.send_message(
-        f"{interaction.user.mention} your reminder for **{keyword.capitalize()}** is activated."
+        f"⏰ {interaction.user.mention} your reminder for **{display_name}** is activated. "
+        f"I'll remind you in {wait_time//3600} hour{'s' if wait_time > 3600 else ''}."
     )
-    await asyncio.sleep(wait_time)
-    await interaction.channel.send(
-        f"{interaction.user.mention}, it's your **{keyword.capitalize()}** reminder!"
-    )
+    
+    # Use asyncio.create_task to run the reminder in background
+    asyncio.create_task(send_reminder(interaction, wait_time, display_name))
+
+
+async def send_reminder(interaction, wait_time, display_name):
+    try:
+        print(f"⏰ Reminder set for {display_name}, waiting {wait_time}s")
+        await asyncio.sleep(wait_time)
+        await interaction.channel.send(
+            f"{interaction.user.mention} 🔔 it's your **{display_name}** reminder!"
+        )
+        print(f"✅ Reminder sent for {display_name}")
+    except Exception as e:
+        print(f"❌ Error in reminder: {e}")
 
 
 # Optional web server for uptime (Render, Replit)
-from flask import Flask
-from threading import Thread
+try:
+    from flask import Flask
+    from threading import Thread
 
-app = Flask(__name__)
+    app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "✅ Bot is running."
+    @app.route('/')
+    def home():
+        return "✅ Bot is running."
 
-def run_flask():
-    port = int(os.environ.get("PORT", 3000))
-    app.run(host='0.0.0.0', port=port)
+    def run_flask():
+        port = int(os.environ.get("PORT", 3000))
+        app.run(host='0.0.0.0', port=port)
 
-Thread(target=run_flask).start()
+    Thread(target=run_flask, daemon=True).start()
+    print("🌐 Flask server started")
+except ImportError:
+    print("⚠️ Flask not available, web server disabled")
 
 # Run bot
-bot.run(DISCORD_TOKEN)
+if __name__ == "__main__":
+    try:
+        bot.run(DISCORD_TOKEN)
+    except Exception as e:
+        print(f"❌ Bot crashed: {e}")
