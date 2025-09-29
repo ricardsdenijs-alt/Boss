@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import re
 import asyncio
@@ -39,7 +40,7 @@ logger = logging.getLogger("timer-bot")
 # Bot & state
 # -------------------------
 intents = discord.Intents.default()
-intents.message_content = True  # enable if you need message content; adjust in dev portal if required
+intents.message_content = True  # enable in dev portal if you need message content
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 active_timers: List[Dict[str, Any]] = []
@@ -76,11 +77,11 @@ async def execute_timer(timer_data: Dict[str, Any]):
     """
     timer_id = timer_data["id"]
     user = timer_data["user"]
-    channel = timer_data["channel"]
+    channel = timer_data.get("channel")
     hops = timer_data["hops"]
     initial_duration = timer_data["initial_duration"]
-    region = timer_data["region"]
-    link = timer_data["link"]
+    region = timer_data.get("region", "Unknown")
+    link = timer_data.get("link", "")
 
     try:
         for hop_index in range(hops):
@@ -110,7 +111,7 @@ async def execute_timer(timer_data: Dict[str, Any]):
                     return
 
                 # Post 5-minute warning
-                if channel:
+                if channel and hasattr(channel, "send"):
                     try:
                         await channel.send(
                             f"{user.mention} ⚠️ **Timer #{timer_id}** - bosses in 5 minutes!\n"
@@ -126,7 +127,7 @@ async def execute_timer(timer_data: Dict[str, Any]):
                 await asyncio.sleep(duration)
 
             # After waiting the hop duration (i.e., the event time), optionally notify it's happening now
-            if timer_data in active_timers and channel:
+            if timer_data in active_timers and channel and hasattr(channel, "send"):
                 try:
                     await channel.send(
                         f"{user.mention} 🔔 **Timer #{timer_id}** - event happening now!\n"
@@ -135,21 +136,22 @@ async def execute_timer(timer_data: Dict[str, Any]):
                 except Exception as exc:
                     logger.exception(f"[Timer #{timer_id}] Failed to send 'happening now' message: {exc}")
 
-            # loop will continue to next hop (which will set its own duration)
-            # no extra sleep here — the next iteration's 'duration' controls the wait.
+            # loop continues to next hop
 
     except asyncio.CancelledError:
         # Task was cancelled (e.g., via remove command)
         logger.info(f"[Timer #{timer_id}] Cancelled.")
-        # Let it bubble up so that higher-level cancel semantics remain intact
         raise
     except Exception as exc:
         logger.exception(f"[Timer #{timer_id}] Unexpected error: {exc}")
     finally:
         # Ensure timer cleaned from active_timers
         if timer_data in active_timers:
-            active_timers.remove(timer_data)
-            logger.info(f"[Timer #{timer_id}] Cleaned up from active_timers.")
+            try:
+                active_timers.remove(timer_data)
+            except ValueError:
+                pass
+        logger.info(f"[Timer #{timer_id}] Cleaned up from active_timers.")
 
 
 # -------------------------
@@ -185,11 +187,9 @@ async def timer_command(
 ):
     global _timer_id_counter
 
-    # Some linters / static analyzers don't realize interaction.response has send_message.
-    # Give it a neutral runtime typing to avoid spurious "cannot find send_message" warnings.
     response: Any = interaction.response
 
-    # Parse time first (so we can respond quickly and only once)
+    # Parse time first
     try:
         seconds = parse_time_string(time)
     except ValueError as ve:
@@ -200,8 +200,9 @@ async def timer_command(
         await response.send_message("❌ Hops must be at least 1.", ephemeral=True)
         return
 
+    link = (link or "").strip()
     if link:
-        if any(t["link"] == link for t in active_timers):
+        if any(t.get("link") == link for t in active_timers):
             await response.send_message("❌ A timer with that link already exists.", ephemeral=True)
             return
 
@@ -211,17 +212,15 @@ async def timer_command(
         _timer_id_counter += 1
 
     now = datetime.now(timezone.utc)
-    # initial alert_time reflects the 5-minute warning if applicable
     if seconds > 300:
         alert_time = now + timedelta(seconds=seconds - 300)
     else:
         alert_time = now + timedelta(seconds=seconds)
 
-    # store channel as a Messageable (could be None in some contexts)
     timer_data: Dict[str, Any] = {
         "id": timer_id,
         "user": interaction.user,
-        "channel": interaction.channel,  # where to send alerts
+        "channel": interaction.channel,
         "initial_duration": seconds,
         "region": region,
         "link": link,
@@ -229,7 +228,7 @@ async def timer_command(
         "remaining_hops": hops,
         "start_time": now,
         "alert_time": alert_time,
-        "task": None,  # will be set below
+        "task": None,
     }
 
     # Start the timer task and keep reference for cancellation
@@ -255,22 +254,26 @@ async def timers_command(interaction: Interaction):
     lines = ["**🕒 Active Timers:**\n"]
     now = datetime.now(timezone.utc)
     for t in active_timers:
-        remaining = t["alert_time"] - now
-        total_seconds = max(0, int(remaining.total_seconds()))
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
+        alert_time = t.get("alert_time")
+        if isinstance(alert_time, datetime):
+            remaining = alert_time - now
+            total_seconds = max(0, int(remaining.total_seconds()))
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
 
-        if total_seconds == 0:
-            time_display = "Alert pending"
-        elif hours > 0:
-            time_display = f"{hours}h{minutes}m"
-        elif minutes > 0:
-            time_display = f"{minutes}m"
+            if total_seconds == 0:
+                time_display = "Alert pending"
+            elif hours > 0:
+                time_display = f"{hours}h{minutes}m"
+            elif minutes > 0:
+                time_display = f"{minutes}m"
+            else:
+                time_display = "Less than 1m"
         else:
-            time_display = "Less than 1m"
+            time_display = "Unknown"
 
         lines.append(
-            f"**Timer #{t['id']}** — Region: **{t['region']}** — Hops left: **{t['remaining_hops']}** — Next: **{time_display}**\n"
+            f"**Timer #{t['id']}** — Region: **{t.get('region','Unknown')}** — Hops left: **{t.get('remaining_hops', 0)}** — Next: **{time_display}**\n"
         )
 
     await response.send_message("".join(lines), ephemeral=True)
@@ -283,12 +286,24 @@ async def remove_command(interaction: Interaction, timer_number: int):
 
     for t in list(active_timers):  # iterate a copy
         if t["id"] == timer_number:
-            # Cancel the running task if present
             task = t.get("task")
             if task and not task.done():
                 task.cancel()
+                try:
+                    # await the task so it can run its cleanup (handle CancelledError)
+                    await task
+                except asyncio.CancelledError:
+                    # expected; the task was cancelled
+                    pass
+                except Exception as exc:
+                    logger.exception(f"[Timer #{timer_number}] Exception while awaiting cancellation: {exc}")
+
             if t in active_timers:
-                active_timers.remove(t)
+                try:
+                    active_timers.remove(t)
+                except ValueError:
+                    pass
+
             await response.send_message(f"🛑 Timer #{timer_number} has been deleted.", ephemeral=True)
             logger.info(f"[Timer #{timer_number}] Removed by {interaction.user}")
             return
@@ -306,19 +321,18 @@ async def reminder_command(interaction: Interaction, message: str):
         await response.send_message("❌ Use exactly one of: boss, super, raids", ephemeral=True)
         return
 
-        if keyword in {"boss", "super"}:
+    if keyword in {"boss", "super"}:
         wait_time_seconds = 3600  # 60 minutes
-    elif keyword == "raids":
+    else:  # raids
         wait_time_seconds = 7200  # 120 minutes
 
-    # Send immediate confirmation
-    await response.send_message(f"⏰ Reminder set for **{keyword}** in {wait_time_seconds // 60} minutes!", ephemeral=True)
+    minutes = wait_time_seconds // 60
+    await response.send_message(f"⏰ Reminder set for **{keyword}** in {minutes} minutes!", ephemeral=True)
 
-    # Schedule the actual reminder to the same channel
     async def reminder_worker(target_channel, author, kw, seconds):
         try:
             await asyncio.sleep(seconds)
-            if target_channel:
+            if target_channel and hasattr(target_channel, "send"):
                 await target_channel.send(f"{author.mention} ⏰ Reminder: **{kw}** is happening now!")
         except asyncio.CancelledError:
             return
@@ -343,25 +357,40 @@ async def start_webserver():
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
     logger.info(f"Webserver started on port {PORT}")
+    return runner  # return runner so caller can cleanup if desired
 
 
 # -------------------------
 # Entrypoint
 # -------------------------
 async def _main():
-    await start_webserver()
+    runner = await start_webserver()
     # Start the bot (this will block until bot stops)
     try:
         await bot.start(DISCORD_TOKEN)
     finally:
-        # Attempt graceful shutdown
         logger.info("Bot stopped, cancelling remaining active timer tasks...")
+        # Cancel and await outstanding tasks (copy list first)
+        tasks_to_wait = []
         for t in list(active_timers):
             task = t.get("task")
             if task and not task.done():
                 task.cancel()
-        # allow short time for tasks to cancel
-        await asyncio.sleep(0.1)
+                tasks_to_wait.append(task)
+            if t in active_timers:
+                try:
+                    active_timers.remove(t)
+                except ValueError:
+                    pass
+
+        if tasks_to_wait:
+            await asyncio.gather(*tasks_to_wait, return_exceptions=True)
+
+        # Attempt to cleanup the webserver runner (best-effort)
+        try:
+            await runner.cleanup()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
@@ -369,4 +398,3 @@ if __name__ == "__main__":
         asyncio.run(_main())
     except KeyboardInterrupt:
         logger.info("Interrupted by user, exiting.")
-
