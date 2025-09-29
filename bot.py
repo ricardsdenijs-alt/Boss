@@ -123,10 +123,10 @@ async def execute_timer(timer: TimerData):
                 if channel and hasattr(channel, "send"):
                     try:
                         await channel.send(
-    f"@here ⚠️ **Timer #{timer_id}** - bosses in 5 minutes!\n"
-    f"🌍 Region: *{region}*\n🔗 {link or 'No link provided'}",
-    suppress_embeds=True
-)
+                            f"@here ⚠️ **Timer #{timer_id}** - bosses in 5 minutes!\n"
+                            f"🌍 Region: *{region}*\n🔗 {link or 'No link provided'}",
+                            suppress_embeds=True
+                        )
 
                     except discord.DiscordException as exc:
                         logger.exception(f"[Timer #{timer_id}] Failed 5-min alert: {exc}")
@@ -134,24 +134,7 @@ async def execute_timer(timer: TimerData):
             else:
                 await asyncio.sleep(duration)
 
-            if timer in active_timers and channel and hasattr(channel, "send"):
-                try:
-                    await channel.send(
-    f"@here 🔔 **Timer #{timer_id}** - event happening now!\n"
-    f"🌍 Region: *{region}*\n🔗 {link or 'No link provided'}",
-    suppress_embeds=True
-)
-
-                except discord.DiscordException as exc:
-                    logger.exception(f"[Timer #{timer_id}] Failed event alert: {exc}")
-
-    except asyncio.CancelledError:
-        logger.info(f"[Timer #{timer_id}] Cancelled.")
-        raise
-    # noinspection PyBroadException
-    except Exception as exc:
-        # Background tasks should log unexpected errors instead of crashing the whole bot.
-        logger.exception(f"[Timer #{timer_id}] Unexpected error: {exc}")
+            
     finally:
         if timer in active_timers:
             try:
@@ -419,4 +402,3 @@ if __name__ == "__main__":
         asyncio.run(_main())
     except KeyboardInterrupt:
         logger.info("Interrupted by user, exiting.")
-
