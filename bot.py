@@ -124,17 +124,30 @@ async def execute_timer(timer: TimerData):
                     try:
                         await channel.send(
                             f"@here ⚠️ **Timer #{timer_id}** - bosses in 5 minutes!\n"
-                            f"🌍 Region: *{region}*\n🔗 {link or 'No link provided'}",
-                            suppress_embeds=True
+                            f"🌍 Region: *{region}*\n🔗 {link or 'No link provided'}"
                         )
-
                     except discord.DiscordException as exc:
                         logger.exception(f"[Timer #{timer_id}] Failed 5-min alert: {exc}")
                 await asyncio.sleep(300)
             else:
                 await asyncio.sleep(duration)
 
-            
+            if timer in active_timers and channel and hasattr(channel, "send"):
+                try:
+                    await channel.send(
+                        f"@here 🔔 **Timer #{timer_id}** - event happening now!\n"
+                        f"🌍 Region: *{region}*\n🔗 {link or 'No link provided'}"
+                    )
+                except discord.DiscordException as exc:
+                    logger.exception(f"[Timer #{timer_id}] Failed event alert: {exc}")
+
+    except asyncio.CancelledError:
+        logger.info(f"[Timer #{timer_id}] Cancelled.")
+        raise
+    # noinspection PyBroadException
+    except Exception as exc:
+        # Background tasks should log unexpected errors instead of crashing the whole bot.
+        logger.exception(f"[Timer #{timer_id}] Unexpected error: {exc}")
     finally:
         if timer in active_timers:
             try:
