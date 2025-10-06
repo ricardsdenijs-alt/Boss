@@ -38,7 +38,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("timer-bot")
 
 # -------------------------
-# Small typed models
+# Data Models
 # -------------------------
 @dataclass
 class TimerData:
@@ -64,7 +64,7 @@ class ReminderData:
 
 
 # -------------------------
-# Bot & state
+# Bot Setup
 # -------------------------
 intents = discord.Intents.default()
 intents.message_content = True
@@ -80,11 +80,10 @@ _timer_lock = asyncio.Lock()
 # -------------------------
 def parse_time_string(time_str: str) -> int:
     cleaned = time_str.replace(" ", "").lower()
-    pattern = r'(?:(\d+)h)?(?:(\d+)m)?$'
+    pattern = r"(?:(\d+)h)?(?:(\d+)m)?$"
     match = re.fullmatch(pattern, cleaned)
     if not match:
-        raise ValueError("Invalid time format. Use examples: '1h30m', '45m', '2h'")
-
+        raise ValueError("Invalid time format. Use '1h30m', '45m', '2h', etc.")
     hours = int(match.group(1)) if match.group(1) else 0
     minutes = int(match.group(2)) if match.group(2) else 0
     total_seconds = hours * 3600 + minutes * 60
@@ -93,6 +92,9 @@ def parse_time_string(time_str: str) -> int:
     return total_seconds
 
 
+# -------------------------
+# Timer logic
+# -------------------------
 async def execute_timer(timer: TimerData):
     timer_id = timer.id
     channel = timer.channel
@@ -119,9 +121,9 @@ async def execute_timer(timer: TimerData):
                 await asyncio.sleep(duration - 300)
                 if timer not in active_timers:
                     return
+
                 if channel and hasattr(channel, "send"):
                     try:
-                        # clickable link text + no embed preview
                         join_text = f"[Join Server]({link})" if link else "No link provided"
                         await channel.send(
                             f"⚠️ **Timer #{timer_id}** - bosses in 5 minutes!\n"
@@ -129,9 +131,10 @@ async def execute_timer(timer: TimerData):
                             suppress_embeds=True,
                         )
                     except discord.Forbidden:
-                        logger.warning(f"[Timer #{timer_id}] Missing permissions in {channel}.")
+                        logger.warning(f"[Timer #{timer_id}] Missing permissions in {channel}")
                     except discord.DiscordException as exc:
                         logger.exception(f"[Timer #{timer_id}] Failed 5-min alert: {exc}")
+
                 await asyncio.sleep(300)
             else:
                 await asyncio.sleep(duration)
@@ -149,7 +152,7 @@ async def execute_timer(timer: TimerData):
 
 
 # -------------------------
-# Commands
+# Discord Commands
 # -------------------------
 @bot.event
 async def on_ready():
@@ -218,7 +221,7 @@ async def timer_command(interaction: Interaction, time: str, hops: int = 1,
     active_timers.append(timer)
 
     await response.send_message(
-        f"⏱ **Timer #{timer_id}** activated for `{time}` (hops: {hops}) in region **{region}**.",
+        f"⏱ **Timer #{timer_id}** started for `{time}` (hops: {hops}) — Region: **{region}**",
         ephemeral=True
     )
 
@@ -230,8 +233,8 @@ async def timers_command(interaction: Interaction):
         await response.send_message("📭 No active timers.", ephemeral=True)
         return
 
-    lines = ["**🕒 Active Timers:**\n"]
     now = datetime.now(timezone.utc)
+    lines = ["**🕒 Active Timers:**\n"]
     for t in active_timers:
         alert_time = t.alert_time
         if isinstance(alert_time, datetime):
@@ -239,20 +242,12 @@ async def timers_command(interaction: Interaction):
             total_seconds = max(0, int(remaining.total_seconds()))
             hours = total_seconds // 3600
             minutes = (total_seconds % 3600) // 60
-            if total_seconds == 0:
-                time_display = "Alert pending"
-            elif hours > 0:
-                time_display = f"{hours}h{minutes}m"
-            elif minutes > 0:
-                time_display = f"{minutes}m"
-            else:
-                time_display = "Less than 1m"
+            time_display = f"{hours}h{minutes}m" if hours > 0 else f"{minutes}m"
         else:
             time_display = "Unknown"
 
         lines.append(
-            f"**Timer #{t.id}** — Region: **{t.region or 'Unknown'}** — "
-            f"Hops left: **{t.remaining_hops}** — Next: **{time_display}**\n"
+            f"**Timer #{t.id}** — Region: **{t.region}** — Hops left: **{t.remaining_hops}** — Next: **{time_display}**\n"
         )
 
     await response.send_message("".join(lines), ephemeral=True)
@@ -273,26 +268,84 @@ async def remove_command(interaction: Interaction, timer_number: int):
                 except asyncio.CancelledError:
                     pass
                 except Exception as exc:
-                    logger.exception(f"[Timer #{timer_number}] Cancel await error: {exc}")
+                    logger.exception(f"[Timer #{timer_number}] Cancel error: {exc}")
 
             if t in active_timers:
-                try:
-                    active_timers.remove(t)
-                except ValueError:
-                    pass
+                active_timers.remove(t)
 
-            await response.send_message(f"🛑 Timer #{timer_number} deleted.", ephemeral=True)
+            await response.send_message(f"🛑 Timer #{timer_number} removed.", ephemeral=True)
             return
 
     await response.send_message("❌ No timer found with that number.", ephemeral=True)
 
 
 # -------------------------
-# Tiny webserver
+# Reminder Commands
+# -------------------------
+@bot.tree.command(name="reminder", description="Set a reminder for boss, raids, or super.")
+@app_commands.describe(message="Enter one of: boss, raids, super")
+async def reminder_command(interaction: Interaction, message: str):
+    response: Any = interaction.response  # type: ignore
+    keyword = message.lower().strip()
+    if keyword not in {"boss", "super", "raids"}:
+        await response.send_message("❌ Use exactly one of: boss, super, raids", ephemeral=True)
+        return
+
+    wait_time_seconds = 3600 if keyword in {"boss", "super"} else 7200
+    minutes = wait_time_seconds // 60
+    await response.send_message(f"⏰ Reminder set for **{keyword}** in {minutes} minutes!", ephemeral=True)
+
+    reminder = ReminderData(
+        keyword=keyword,
+        start_time=datetime.now(timezone.utc),
+        duration=wait_time_seconds,
+        task=None
+    )
+
+    async def reminder_worker(target_channel, author, data: ReminderData):
+        try:
+            await asyncio.sleep(data.duration)
+            if target_channel and hasattr(target_channel, "send"):
+                await target_channel.send(f"{author.mention} ⏰ Reminder: **{data.keyword}** is happening now!")
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.exception(f"Reminder failed: {exc}")
+        finally:
+            if author.id in active_reminders and data in active_reminders[author.id]:
+                active_reminders[author.id].remove(data)
+
+    task = asyncio.create_task(reminder_worker(interaction.channel, interaction.user, reminder))
+    reminder.task = task
+    active_reminders.setdefault(interaction.user.id, []).append(reminder)
+
+
+@bot.tree.command(name="reminders", description="List your active reminders.")
+async def reminders_command(interaction: Interaction):
+    response: Any = interaction.response  # type: ignore
+    user_id = interaction.user.id
+    reminders = active_reminders.get(user_id, [])
+    if not reminders:
+        await response.send_message("📭 You have no active reminders.", ephemeral=True)
+        return
+
+    now = datetime.now(timezone.utc)
+    lines = ["**⏰ Your Active Reminders:**\n"]
+    for idx, r in enumerate(reminders, 1):
+        end_time = r.start_time + timedelta(seconds=r.duration)
+        remaining = max(0, int((end_time - now).total_seconds()))
+        minutes = remaining // 60
+        seconds = remaining % 60
+        lines.append(f"{idx}. **{r.keyword}** — {minutes}m{seconds}s remaining\n")
+
+    await response.send_message("".join(lines), ephemeral=True)
+
+
+# -------------------------
+# Webserver (for Render/UptimeRobot)
 # -------------------------
 async def _handle_root(_request):
     return web.Response(text="✅ Bot is running")
-
 
 async def start_webserver():
     app = web.Application()
@@ -304,8 +357,9 @@ async def start_webserver():
     logger.info(f"Webserver started on port {PORT}")
     return runner
 
+
 # -------------------------
-# Entrypoint (auto-restart)
+# Entrypoint with auto-restart
 # -------------------------
 async def _main():
     while True:
@@ -319,16 +373,14 @@ async def _main():
             logger.info("Bot stopping, cleaning up timers/reminders...")
             tasks_to_wait: List[asyncio.Task] = []
             for t in list(active_timers):
-                task = t.task
-                if task and not task.done():
-                    task.cancel()
-                    tasks_to_wait.append(task)
+                if t.task and not t.task.done():
+                    t.task.cancel()
+                    tasks_to_wait.append(t.task)
             for user_id, reminders in list(active_reminders.items()):
                 for r in reminders:
-                    task = r.task
-                    if task and not task.done():
-                        task.cancel()
-                        tasks_to_wait.append(task)
+                    if r.task and not r.task.done():
+                        r.task.cancel()
+                        tasks_to_wait.append(r.task)
                 active_reminders[user_id] = []
 
             if tasks_to_wait:
