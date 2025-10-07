@@ -315,6 +315,54 @@ async def reminder_command(interaction: Interaction, message: str):
     # noinspection PyUnresolvedReferences
     return await interaction.response.send_message(f"🔔 Reminder for **{keyword}** set for {human_time}.", ephemeral=True)
 
+@bot.tree.command(name="reminders", description="List or cancel your active reminders.")
+@app_commands.describe(action="Optional: 'list' (default) or 'cancel <keyword>'")
+async def reminders_command(interaction: Interaction, action: Optional[str] = "list"):
+    """
+    /reminders — shows your active reminders
+    /reminders cancel boss — cancels your reminder for 'boss'
+    """
+    uid = getattr(interaction.user, "id", None)
+    if uid is None:
+        # noinspection PyUnresolvedReferences
+        return await interaction.response.send_message("❌ Unable to identify your user ID.", ephemeral=True)
+
+    user_reminders = active_reminders.get(uid, [])
+    parts = (action or "").split()
+
+    # Handle cancel request
+    if parts and parts[0].lower() == "cancel":
+        if len(parts) < 2:
+            # noinspection PyUnresolvedReferences
+            return await interaction.response.send_message("❌ Usage: `/reminders cancel <keyword>`", ephemeral=True)
+        keyword = parts[1].lower()
+        for rem in list(user_reminders):
+            if rem.keyword == keyword:
+                if rem.task and not rem.task.done():
+                    rem.task.cancel()
+                user_reminders.remove(rem)
+                if not user_reminders:
+                    active_reminders.pop(uid, None)
+                # noinspection PyUnresolvedReferences
+                return await interaction.response.send_message(f"🗑 Reminder for **{keyword}** cancelled.", ephemeral=True)
+        # noinspection PyUnresolvedReferences
+        return await interaction.response.send_message(f"❌ No active reminder found for '{keyword}'.", ephemeral=True)
+
+    # Default: list all reminders
+    if not user_reminders:
+        # noinspection PyUnresolvedReferences
+        return await interaction.response.send_message("📭 You have no active reminders.", ephemeral=True)
+
+    now = datetime.now(timezone.utc)
+    lines = ["**🔔 Your Active Reminders:**\n"]
+    for rem in user_reminders:
+        remaining = max(0, int((rem.start_time + timedelta(seconds=rem.duration) - now).total_seconds()))
+        lines.append(f"• **{rem.keyword}** — triggers in {humanize_seconds(remaining)}\n")
+
+    # noinspection PyUnresolvedReferences
+    return await interaction.response.send_message("".join(lines), ephemeral=True)
+
+
 # ------------------------------------------------------
 # Run bot + keepalive
 # ------------------------------------------------------
@@ -333,3 +381,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Shutting down by user request.")
+
