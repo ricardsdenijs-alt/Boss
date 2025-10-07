@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 import discord
 from discord import Interaction, app_commands
 from discord.ext import commands
-from aiohttp import web
+from aiohttp import web  # used for keepalive
 
 # ------------------------------------------------------
 # Configuration
@@ -89,6 +89,13 @@ def parse_time_string(time_str: str) -> int:
         raise ValueError("Time must be greater than 0.")
     return total_seconds
 
+def humanize_seconds(seconds: int) -> str:
+    minutes_total = seconds // 60
+    hours, minutes = divmod(minutes_total, 60)
+    if hours:
+        return f"{hours}h{minutes}m"
+    return f"{minutes}m"
+
 # ------------------------------------------------------
 # Timer Logic
 # ------------------------------------------------------
@@ -116,7 +123,6 @@ async def execute_timer(timer: TimerData):
             else:
                 await asyncio.sleep(duration)
 
-        # Finished all hops
         logger.info(f"[Timer #{timer_id}] Completed all hops.")
     except asyncio.CancelledError:
         logger.info(f"[Timer #{timer_id}] Cancelled.")
@@ -132,6 +138,54 @@ async def safe_send(channel, message: str):
             await channel.send(message)
     except discord.DiscordException as exc:
         logger.warning(f"Failed to send message: {exc}")
+
+# ------------------------------------------------------
+# Reminder Logic
+# ------------------------------------------------------
+async def _run_reminder(reminder: ReminderData, channel, user):
+    try:
+        await asyncio.sleep(reminder.duration)
+        if channel and hasattr(channel, "send"):
+            try:
+                await channel.send(f"🔔 {user.mention} — Reminder: **{reminder.keyword}**")
+            except discord.DiscordException as exc:
+                logger.warning(f"Failed to send reminder to channel: {exc}")
+    except asyncio.CancelledError:
+        logger.info(f"Reminder for {reminder.keyword} cancelled for user {getattr(user, 'id', 'unknown')}")
+        raise
+    finally:
+        uid = getattr(user, "id", None)
+        if uid is not None:
+            lst = active_reminders.get(uid)
+            if lst and reminder in lst:
+                lst.remove(reminder)
+                if not lst:
+                    active_reminders.pop(uid, None)
+
+def schedule_reminder(keyword: str, duration: int, channel, user) -> ReminderData:
+    reminder = ReminderData(keyword=keyword, start_time=datetime.now(timezone.utc), duration=duration)
+    task = asyncio.create_task(_run_reminder(reminder, channel, user))
+    reminder.task = task
+    uid = getattr(user, "id", None)
+    if uid is not None:
+        active_reminders.setdefault(uid, []).append(reminder)
+    return reminder
+
+# ------------------------------------------------------
+# Keepalive Web Server (for UptimeRobot)
+# ------------------------------------------------------
+async def handle_root(request):
+    return web.Response(text="✅ Bot is alive!", content_type="text/plain")
+
+async def run_keepalive():
+    app = web.Application()
+    app.router.add_get("/", handle_root)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    logger.info(f"🌐 Keepalive server running on port {PORT}")
+    # don't block here; site will keep serving in the event loop
 
 # ------------------------------------------------------
 # Discord Commands
@@ -156,13 +210,16 @@ async def timer_command(interaction: Interaction, time: str, hops: int = 1, regi
     try:
         seconds = parse_time_string(time)
     except ValueError as e:
+        # noinspection PyUnresolvedReferences
         return await interaction.response.send_message(f"❌ {e}", ephemeral=True)
 
     if hops < 1:
+        # noinspection PyUnresolvedReferences
         return await interaction.response.send_message("❌ Hops must be at least 1.", ephemeral=True)
 
     link = (link or "").strip()
     if link and any(t.link == link for t in active_timers):
+        # noinspection PyUnresolvedReferences
         return await interaction.response.send_message("❌ A timer with that link already exists.", ephemeral=True)
 
     async with _timer_lock:
@@ -184,7 +241,9 @@ async def timer_command(interaction: Interaction, time: str, hops: int = 1, regi
     )
     timer.task = asyncio.create_task(execute_timer(timer))
     active_timers.append(timer)
-    await interaction.response.send_message(
+
+    # noinspection PyUnresolvedReferences
+    return await interaction.response.send_message(
         f"⏱ **Timer #{timer_id}** activated for {time} (hops: {hops}) in region **{region}**.",
         ephemeral=True
     )
@@ -192,17 +251,18 @@ async def timer_command(interaction: Interaction, time: str, hops: int = 1, regi
 @bot.tree.command(name="timers", description="List all active timers.")
 async def timers_command(interaction: Interaction):
     if not active_timers:
+        # noinspection PyUnresolvedReferences
         return await interaction.response.send_message("📭 No active timers.", ephemeral=True)
 
     lines = ["**🕒 Active Timers:**\n"]
     now = datetime.now(timezone.utc)
     for t in active_timers:
         remaining = max(0, int((t.alert_time - now).total_seconds())) if t.alert_time else 0
-        hours, minutes = divmod(remaining // 60, 60)
-        display = f"{hours}h{minutes}m" if hours else f"{minutes}m"
+        display = humanize_seconds(remaining)
         lines.append(f"**#{t.id}** — Region: **{t.region}**, Hops left: **{t.remaining_hops}**, Next: **{display}**\n")
 
-    await interaction.response.send_message("".join(lines), ephemeral=True)
+    # noinspection PyUnresolvedReferences
+    return await interaction.response.send_message("".join(lines), ephemeral=True)
 
 @bot.tree.command(name="remove", description="Remove a timer by its number.")
 async def remove_command(interaction: Interaction, timer_number: int):
@@ -212,102 +272,64 @@ async def remove_command(interaction: Interaction, timer_number: int):
                 t.task.cancel()
             if t in active_timers:
                 active_timers.remove(t)
+            # noinspection PyUnresolvedReferences
             return await interaction.response.send_message(f"🛑 Timer #{timer_number} deleted.", ephemeral=True)
-    await interaction.response.send_message("❌ No timer found with that number.", ephemeral=True)
 
-# ------------------------------------------------------
-# Reminder Commands
-# ------------------------------------------------------
-@bot.tree.command(name="reminder", description="Set a reminder for boss, raids, or super.")
+    # noinspection PyUnresolvedReferences
+    return await interaction.response.send_message("❌ No timer found with that number.", ephemeral=True)
+
+@bot.tree.command(name="reminder", description="Set a reminder for boss, raids, or super. Usage: <keyword> [time], e.g. 'boss 30m'")
 async def reminder_command(interaction: Interaction, message: str):
-    keyword = message.lower().strip()
-    if keyword not in {"boss", "super", "raids"}:
-        return await interaction.response.send_message("❌ Use exactly one of: boss, super, raids", ephemeral=True)
+    """
+    Expected `message` formats:
+      - "boss"
+      - "boss 30m"
+      - "raids 1h"
+      - "super 45m"
+    Default duration if not given: 1h
+    """
+    parts = message.strip().split()
+    if not parts:
+        # noinspection PyUnresolvedReferences
+        return await interaction.response.send_message("❌ Please provide a keyword (boss, super, raids).", ephemeral=True)
 
-    wait_time = 3600 if keyword in {"boss", "super"} else 7200
-    reminder = ReminderData(keyword=keyword, start_time=datetime.now(timezone.utc), duration=wait_time)
-    reminder.task = asyncio.create_task(reminder_worker(interaction.channel, interaction.user, reminder))
-    active_reminders.setdefault(interaction.user.id, []).append(reminder)
-    await interaction.response.send_message(f"⏰ Reminder set for **{keyword}** in {wait_time//60} minutes!", ephemeral=True)
+    keyword = parts[0].lower()
+    allowed = {"boss", "super", "raids"}
+    if keyword not in allowed:
+        # noinspection PyUnresolvedReferences
+        return await interaction.response.send_message(f"❌ Unknown keyword. Allowed: {', '.join(sorted(allowed))}.", ephemeral=True)
 
-async def reminder_worker(channel, author, data: ReminderData):
-    try:
-        await asyncio.sleep(data.duration)
-        await safe_send(channel, f"{author.mention} ⏰ Reminder: **{data.keyword}** is happening now!")
-    except asyncio.CancelledError:
-        return
-    finally:
-        if author.id in active_reminders and data in active_reminders[author.id]:
-            active_reminders[author.id].remove(data)
+    # parse optional time
+    duration_seconds = 3600  # default 1 hour
+    if len(parts) > 1:
+        time_part = "".join(parts[1:])  # join in case user typed "1h 30m"
+        try:
+            duration_seconds = parse_time_string(time_part)
+        except ValueError as e:
+            # noinspection PyUnresolvedReferences
+            return await interaction.response.send_message(f"❌ {e}", ephemeral=True)
 
-@bot.tree.command(name="reminders", description="List your active reminders.")
-async def reminders_command(interaction: Interaction):
-    reminders = active_reminders.get(interaction.user.id, [])
-    if not reminders:
-        return await interaction.response.send_message("📭 You have no active reminders.", ephemeral=True)
-    now = datetime.now(timezone.utc)
-    lines = ["**⏰ Your Active Reminders:**\n"]
-    for i, r in enumerate(reminders, 1):
-        end_time = r.start_time + timedelta(seconds=r.duration)
-        remaining = max(0, int((end_time - now).total_seconds()))
-        m, s = divmod(remaining, 60)
-        lines.append(f"{i}. **{r.keyword}** — {m}m{s}s remaining\n")
-    await interaction.response.send_message("".join(lines), ephemeral=True)
-
-# ------------------------------------------------------
-# Web Server for Render/UptimeRobot
-# ------------------------------------------------------
-async def handle_root(_):
-    return web.Response(text="✅ Bot is running and healthy")
-
-async def handle_status(_):
-    return web.json_response({
-        "status": "ok",
-        "timers": len(active_timers),
-        "reminders": sum(len(v) for v in active_reminders.values())
-    })
-
-async def start_webserver():
-    app = web.Application()
-    app.router.add_get("/", handle_root)
-    app.router.add_get("/status", handle_status)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
-    logger.info(f"🌐 Webserver started on port {PORT}")
-    return runner
+    # Schedule the reminder (no local unused variable)
+    schedule_reminder(keyword, duration_seconds, interaction.channel, interaction.user)
+    human_time = humanize_seconds(duration_seconds)
+    # noinspection PyUnresolvedReferences
+    return await interaction.response.send_message(f"🔔 Reminder for **{keyword}** set for {human_time}.", ephemeral=True)
 
 # ------------------------------------------------------
-# Entrypoint
+# Run bot + keepalive
 # ------------------------------------------------------
 async def main():
-    runner = await start_webserver()
-
-    bot_task = asyncio.create_task(bot.start(DISCORD_TOKEN))
-    logger.info("🚀 Bot task started.")
-
+    # start keepalive first (returns once site started)
+    await run_keepalive()
+    # start the bot (this call blocks until the bot stops)
     try:
-        await bot_task
-    except asyncio.CancelledError:
-        logger.info("Bot cancelled.")
-    except Exception as e:
-        logger.exception(f"Bot crashed: {e}")
+        await bot.start(DISCORD_TOKEN)
     finally:
-        logger.info("Cleaning up...")
-        for t in list(active_timers):
-            if t.task and not t.task.done():
-                t.task.cancel()
-        for u, rems in active_reminders.items():
-            for r in rems:
-                if r.task and not r.task.done():
-                    r.task.cancel()
-        await asyncio.gather(*(t.task for t in active_timers if t.task), return_exceptions=True)
-        await runner.cleanup()
-        logger.info("Shutdown complete.")
+        # ensure cleanup
+        await bot.close()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Exited by user.")
+        logger.info("Shutting down by user request.")
