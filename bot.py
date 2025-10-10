@@ -286,18 +286,44 @@ async def reminder_command(interaction: Interaction, message: str):
       - "boss 30m"
       - "raids 1h"
       - "super 45m"
-    Default duration if not given: 1h
+    Default duration if not given:
+      - raids => 2 hours
+      - boss, super => 1 hour
     """
     parts = message.strip().split()
     if not parts:
-        # noinspection PyUnresolvedReferences
-        return await interaction.response.send_message("❌ Please provide a keyword (boss, super, raids).", ephemeral=True)
+        return await interaction.response.send_message(
+            "❌ Please provide a keyword (boss, super, raids).", ephemeral=True
+        )
 
     keyword = parts[0].lower()
     allowed = {"boss", "super", "raids"}
     if keyword not in allowed:
-        # noinspection PyUnresolvedReferences
-        return await interaction.response.send_message(f"❌ Unknown keyword. Allowed: {', '.join(sorted(allowed))}.", ephemeral=True)
+        return await interaction.response.send_message(
+            f"❌ Unknown keyword. Allowed: {', '.join(sorted(allowed))}.", ephemeral=True
+        )
+
+    # If user provided a time, parse it. Otherwise choose default per keyword.
+    if len(parts) > 1:
+        time_part = "".join(parts[1:])  # supports "1h 30m" as "1h30m"
+        try:
+            duration_seconds = parse_time_string(time_part)
+        except ValueError as e:
+            return await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+    else:
+        # Default durations
+        if keyword == "raids":
+            duration_seconds = 2 * 3600  # 2 hours
+        else:
+            duration_seconds = 1 * 3600  # 1 hour for boss and super
+
+    # Schedule the reminder
+    schedule_reminder(keyword, duration_seconds, interaction.channel, interaction.user)
+    human_time = humanize_seconds(duration_seconds)
+    return await interaction.response.send_message(
+        f"🔔 Reminder for **{keyword}** set for {human_time}.", ephemeral=True
+    )
+
 
     # parse optional time
     duration_seconds = 3600  # default 1 hour
@@ -381,4 +407,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Shutting down by user request.")
+
 
